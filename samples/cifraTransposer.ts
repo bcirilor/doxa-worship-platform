@@ -16,14 +16,29 @@ export function calcularSemitoms(origem: string, destino: string): number {
   return ((d.chroma - o.chroma) + 12) % 12
 }
 
+// Tokens neutros (não contam como ok nem fail) — barras, repetições, comentários inline, etc.
+const SKIP_TOKEN_RE = /^(?:[|:]+|\d+x|x\d+|\(.*\)|--+|\.\.+)$/i
+
+// Normaliza notação não-padrão para forma reconhecida pelo tonal
+function normalizeChordToken(tok: string): string {
+  return tok
+    .replace(/[°º]/g, 'dim')   // C° → Cdim
+    .replace(/[ΔΔ△]/g, 'maj7')  // CΔ → Cmaj7
+    .replace(/[♭b](?=\d)/g, 'b') // C♭5 → Cb5 (normaliza unicode flat)
+    .replace(/[♯#](?=\d)/g, '#')
+}
+
 export function isChordLine(linha: string): boolean {
   if (!linha.trim()) return false
   const tokens = linha.trim().split(/\s+/)
   let ok = 0, fail = 0
   for (const tok of tokens) {
-    let clean = tok
+    // Pula tokens neutros (|, x2, 2x, (dedilhado), etc.) — não pesa positivo nem negativo
+    if (SKIP_TOKEN_RE.test(tok)) continue
+
+    let clean = normalizeChordToken(tok)
       .replace(/\([^)]*\)/g, '')           // remove extensões entre parênteses: (11), (add9), (b5)
-      .replace(/^[(|\-]+|[)|\-x\d]+$/g, '') // remove marcadores externos: |, -, x2
+      .replace(/^[(|\-]+|[)|\-]+$/g, '')   // remove marcadores externos: |, -
     if (!clean) continue
     const root = clean.split('/')[0]
     let c = Chord.get(root)
@@ -34,7 +49,8 @@ export function isChordLine(linha: string): boolean {
     }
     c.tonic && !c.empty ? ok++ : fail++
   }
-  return ok > 0 && fail === 0
+  // Critério: pelo menos 2 acordes válidos e maioria ok — tolera 1 token estranho em linha cheia
+  return ok >= 2 && ok >= fail
 }
 
 function transposeToken(token: string, itvl: string): string {
