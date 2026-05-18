@@ -41,6 +41,8 @@ export function isChordLine(linha: string): boolean {
       .replace(/^[(|\-]+|[)|\-]+$/g, '')   // remove marcadores externos: |, -
     if (!clean) continue
     const root = clean.split('/')[0]
+    // Acorde sempre começa com nota maiúscula A-G; tonal aceita minúsculas mas não é notação válida
+    if (!/^[A-G]/.test(root)) { fail++; continue }
     let c = Chord.get(root)
     if (!c.tonic || c.empty) {
       // Normaliza notação com número solto: A2→Aadd2, D4→Dsus4, G6→Gadd6
