@@ -22,9 +22,10 @@ const SKIP_TOKEN_RE = /^(?:[|:]+|\d+x|x\d+|\(.*\)|--+|\.\.+)$/i
 // Normaliza notação não-padrão para forma reconhecida pelo tonal
 function normalizeChordToken(tok: string): string {
   return tok
-    .replace(/[°º]/g, 'dim')   // C° → Cdim
-    .replace(/[ΔΔ△]/g, 'maj7')  // CΔ → Cmaj7
-    .replace(/[♭b](?=\d)/g, 'b') // C♭5 → Cb5 (normaliza unicode flat)
+    .replace(/[°º]/g, 'dim')        // C° → Cdim
+    .replace(/[ΔΔ△]/g, 'maj7')      // CΔ → Cmaj7
+    .replace(/(\d)M\b/g, 'maj$1')   // D7M → Dmaj7 (notação BR)
+    .replace(/[♭b](?=\d)/g, 'b')    // C♭5 → Cb5 (unicode flat)
     .replace(/[♯#](?=\d)/g, '#')
 }
 
@@ -62,14 +63,15 @@ function transposeToken(token: string, itvl: string): string {
   if (slash > 0) {
     return transposeToken(token.slice(0, slash), itvl) + '/' + transposeToken(token.slice(slash + 1), itvl)
   }
-  const chord = Chord.get(token)
+  // Normalize (7M→maj7, °→dim, etc.) for tonal lookup; preserve original suffix in output
+  const chord = Chord.get(normalizeChordToken(token))
   if (!chord.tonic || chord.empty) return token
   const newTonic = Note.pitchClass(Note.transpose(chord.tonic, itvl))
   return newTonic + token.slice(chord.tonic.length)
 }
 
-// Matches chord tokens: C, Am, F#m7, Bbsus4, G7, Dm/F, etc.
-const CHORD_RE = /([A-G][#b]?(?:m(?:aj)?|M|dim|aug|sus[24]?|add\d+)?(?:\d+)?(?:\/[A-G][#b]?)?)/g
+// Matches chord tokens: C, Am, F#m7, Bbsus4, G7, Dm/F, D7M/A (notação BR), etc.
+const CHORD_RE = /([A-G][#b]?(?:m(?:aj)?|M|dim|aug|sus[24]?|add\d+)?(?:\d+M?)?(?:\/[A-G][#b]?)?)/g
 
 export function transporCifra(texto: string, semitones: number): string {
   if (!semitones || !texto) return texto
@@ -80,7 +82,8 @@ export function transporCifra(texto: string, semitones: number): string {
       if (/^\[.+\]$/.test(linha)) return linha
       if (!isChordLine(linha)) return linha
       return linha.replace(CHORD_RE, match => {
-        const c = Chord.get(match.split('/')[0])
+        const root = normalizeChordToken(match.split('/')[0])
+        const c = Chord.get(root)
         return c.tonic && !c.empty ? transposeToken(match, itvl) : match
       })
     })
