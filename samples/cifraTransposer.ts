@@ -49,8 +49,9 @@ export function isChordLine(linha: string): boolean {
     }
     c.tonic && !c.empty ? ok++ : fail++
   }
-  // Critério: pelo menos 2 acordes válidos e maioria ok — tolera 1 token estranho em linha cheia
-  return ok >= 2 && ok >= fail
+  // Linha com 1 acorde sozinho (ex: "Bb", "Am7") é linha de acorde se zero falhas.
+  // Linha com 2+ acordes: tolera 1 token estranho (ok >= fail).
+  return (ok >= 1 && fail === 0) || (ok >= 2 && ok >= fail)
 }
 
 function transposeToken(token: string, itvl: string): string {
