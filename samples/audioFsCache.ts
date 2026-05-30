@@ -181,6 +181,19 @@ type Backend = 'opfs' | 'idb'
 let _worker: Worker | null = null
 let _backend: Promise<Backend> | null = null
 let _backendResolved: Backend | null = null   // versão síncrona p/ o fast-path de cachePut
+
+// Telemetria: registra o backend escolhido (1×) e expõe em window.__audioCacheBackend.
+// Permite verificar no console se OPFS está ativo (esperado em prod) ou se caiu p/ IndexedDB
+// (LevelDB → compaction → freeze ao trocar de aba). 'opfs' = sem freeze; 'idb' = path legado.
+let _backendLogged = false
+function markBackend(b: Backend): Backend {
+  _backendResolved = b
+  try {
+    if (typeof window !== 'undefined') (window as unknown as { __audioCacheBackend?: Backend }).__audioCacheBackend = b
+    if (!_backendLogged) { _backendLogged = true; console.info('[audioFsCache] backend =', b) }
+  } catch { /* silent */ }
+  return b
+}
 let _workerBlobUrl: string | null = null
 let _msgId = 0
 const _getPending = new Map<number, (buf: ArrayBuffer | null) => void>()
@@ -204,7 +217,7 @@ function postPutOpfs(key: string, buffer: ArrayBuffer): void {
 }
 
 function degradeToIdb(): void {
-  _backendResolved = 'idb'
+  markBackend('idb')   // OPFS falhou em runtime (worker error) → telemetria + fallback
   _inFlightPutBytes = 0
   _putBytes.clear()
   const w = _worker
@@ -233,7 +246,7 @@ function initBackend(): Promise<Backend> {
       typeof window === 'undefined' || typeof Worker === 'undefined' ||
       typeof navigator === 'undefined' || !navigator.storage ||
       typeof navigator.storage.getDirectory !== 'function'
-    ) { _backendResolved = 'idb'; resolve('idb'); return }
+    ) { resolve(markBackend('idb')); return }
 
     try {
       if (!_workerBlobUrl) {
@@ -246,7 +259,7 @@ function initBackend(): Promise<Backend> {
         if (settled) return
         settled = true
         clearTimeout(to)
-        _backendResolved = b
+        markBackend(b)
         if (keep) { _worker = w; w.onmessage = handleWorkerMessage; w.onerror = () => degradeToIdb() }
         else { try { w.terminate() } catch { /* silent */ } }
         resolve(b)
@@ -255,7 +268,7 @@ function initBackend(): Promise<Backend> {
       w.onmessage = (ev) => { if (ev.data?.type === 'ready') finish(ev.data.ok ? 'opfs' : 'idb', !!ev.data.ok) }
       w.onerror = () => finish('idb', false)
       w.postMessage({ op: 'init', cap: CACHE_CAP_BYTES })
-    } catch { _backendResolved = 'idb'; resolve('idb') }
+    } catch { resolve(markBackend('idb')) }
   })
   return _backend
 }
