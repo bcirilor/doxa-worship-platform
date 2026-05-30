@@ -185,8 +185,28 @@ let _workerBlobUrl: string | null = null
 let _msgId = 0
 const _getPending = new Map<number, (buf: ArrayBuffer | null) => void>()
 
+// Backpressure de escrita: cachePut faz structured-clone do buffer ao postar p/ o
+// worker. Numa música pesada (16 faixas) a página já retém os ~112MB comprimidos no
+// Map `downloaded` (page.tsx) p/ o decode; sem teto, os clones dobrariam isso no worker
+// → OOM/crash do renderer. Limita os clones em voo; acima do teto, pula o cache (a
+// faixa re-baixa na próxima visita). Disco é rápido → in-flight fica baixo no caso comum.
+const MAX_INFLIGHT_PUT_BYTES = 32 * 1024 * 1024
+let _inFlightPutBytes = 0
+const _putBytes = new Map<number, number>()   // msgId → bytes em voo
+
+function postPutOpfs(key: string, buffer: ArrayBuffer): void {
+  if (!_worker) return
+  if (_inFlightPutBytes + buffer.byteLength > MAX_INFLIGHT_PUT_BYTES) return  // backpressure: pula
+  const id = ++_msgId
+  _putBytes.set(id, buffer.byteLength)
+  _inFlightPutBytes += buffer.byteLength
+  _worker.postMessage({ op: 'put', id, key, buffer })   // sem transfer → clone captura bytes neste tick
+}
+
 function degradeToIdb(): void {
   _backendResolved = 'idb'
+  _inFlightPutBytes = 0
+  _putBytes.clear()
   const w = _worker
   _worker = null
   if (w) { try { w.terminate() } catch { /* silent */ } }
@@ -200,8 +220,10 @@ function handleWorkerMessage(e: MessageEvent): void {
   if (d?.type === 'got') {
     const r = _getPending.get(d.id)
     if (r) { _getPending.delete(d.id); r(d.buffer ?? null) }
+  } else if (d?.type === 'done') {
+    const b = _putBytes.get(d.id)   // libera o crédito de in-flight ao confirmar a escrita
+    if (b !== undefined) { _putBytes.delete(d.id); _inFlightPutBytes -= b }
   }
-  // 'done' (put ack) ignorado — cachePut é fire-and-forget
 }
 
 function initBackend(): Promise<Backend> {
@@ -229,7 +251,7 @@ function initBackend(): Promise<Backend> {
         else { try { w.terminate() } catch { /* silent */ } }
         resolve(b)
       }
-      const to = setTimeout(() => finish('idb', false), 3000)  // handshake travou → IDB
+      const to = setTimeout(() => finish('idb', false), 8000)  // handshake travou → IDB (folga p/ init OPFS frio)
       w.onmessage = (ev) => { if (ev.data?.type === 'ready') finish(ev.data.ok ? 'opfs' : 'idb', !!ev.data.ok) }
       w.onerror = () => finish('idb', false)
       w.postMessage({ op: 'init', cap: CACHE_CAP_BYTES })
@@ -258,16 +280,13 @@ export async function cacheGet(key: string): Promise<ArrayBuffer | null> {
  * download, drenada rápido pelo worker (escrita em disco é muito mais veloz que a rede).
  */
 export function cachePut(key: string, buffer: ArrayBuffer): void {
-  if (_backendResolved === 'opfs' && _worker) {       // fast-path síncrono (caso comum)
-    _worker.postMessage({ op: 'put', id: ++_msgId, key, buffer })
-    return
-  }
+  if (_backendResolved === 'opfs' && _worker) { postPutOpfs(key, buffer); return }  // fast-path síncrono
   if (_backendResolved === 'idb') { idbSchedule(key, buffer); return }
   // backend ainda não resolveu (raro: 1º put antes do handshake) — resolve async.
   // cacheGet roda antes de qualquer download e aguarda initBackend, então na prática
   // o backend já está resolvido aqui.
   initBackend().then((b) => {
-    if (b === 'opfs' && _worker) _worker.postMessage({ op: 'put', id: ++_msgId, key, buffer })
+    if (b === 'opfs' && _worker) postPutOpfs(key, buffer)
     else idbSchedule(key, buffer)
   }).catch(() => { /* silent */ })
 }
