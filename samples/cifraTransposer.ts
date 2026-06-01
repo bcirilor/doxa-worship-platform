@@ -4,16 +4,54 @@ export const TONS_PT = [
   'Dó', 'Dó#', 'Ré', 'Ré#', 'Mi', 'Fá', 'Fá#', 'Sol', 'Sol#', 'Lá', 'Lá#', 'Si',
 ]
 
+export const TONS_EN = [
+  'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
+]
+
 const PT_TO_EN: Record<string, string> = {
   'Dó': 'C', 'Dó#': 'C#', 'Ré': 'D', 'Ré#': 'D#', 'Mi': 'E',
   'Fá': 'F', 'Fá#': 'F#', 'Sol': 'G', 'Sol#': 'G#', 'Lá': 'A', 'Lá#': 'A#', 'Si': 'B',
 }
 
+// PT mais longo primeiro p/ "Dó#" casar antes de "Dó"
+const TONS_PT_DESC = [...TONS_PT].sort((a, b) => b.length - a.length)
+
+// Raiz (nota EN) de um rótulo de tom. Aceita PT (Dó, Sol#), EN (C, G#) com
+// menor/7/sus etc.: "Am" → "A", "Sol#m7" → "G#", "Bb" → "Bb".
+function rootNote(tom: string): string {
+  const ptRoot = TONS_PT_DESC.find(t => tom.startsWith(t))
+  if (ptRoot) return PT_TO_EN[ptRoot]
+  const m = tom.match(/^([A-G][#b]?)/)
+  return m ? m[1] : tom
+}
+
 export function calcularSemitoms(origem: string, destino: string): number {
-  const o = Note.get(PT_TO_EN[origem] ?? origem)
-  const d = Note.get(PT_TO_EN[destino] ?? destino)
+  const o = Note.get(rootNote(origem))
+  const d = Note.get(rootNote(destino))
   if (o.empty || d.empty || o.chroma == null || d.chroma == null) return 0
   return ((d.chroma - o.chroma) + 12) % 12
+}
+
+// Transpõe um rótulo de tom por N semitons, preservando notação (PT/EN) e
+// sufixo (menor, 7, sus...). "G"→+2→"A" · "Am"→+1→"Bbm" · "Sol"→+1→"Sol#".
+// Casa a grafia (bemóis) com transporCifra p/ tom e acordes baterem.
+export function transporTom(tom: string, semitones: number): string {
+  if (!tom) return tom
+  const norm = ((semitones % 12) + 12) % 12
+  if (norm === 0) return tom
+
+  const ptRoot = TONS_PT_DESC.find(t => tom.startsWith(t))
+  if (ptRoot) {
+    const sufixo = tom.slice(ptRoot.length)
+    const idx = TONS_EN.indexOf(PT_TO_EN[ptRoot])
+    const novoEn = TONS_EN[(idx + norm) % 12]
+    return TONS_PT[TONS_EN.indexOf(novoEn)] + sufixo
+  }
+
+  const m = tom.match(/^([A-G][#b]?)(.*)$/)
+  if (!m) return tom
+  const novaRaiz = Note.pitchClass(Note.transpose(m[1], Interval.fromSemitones(norm)))
+  return novaRaiz ? novaRaiz + m[2] : tom
 }
 
 // Tokens neutros (não contam como ok nem fail) — barras, repetições, comentários inline, etc.
