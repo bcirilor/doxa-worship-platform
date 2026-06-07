@@ -32,6 +32,15 @@ export function calcularSemitoms(origem: string, destino: string): number {
   return ((d.chroma - o.chroma) + 12) % 12
 }
 
+// Converte rótulo de tom p/ notação EN (cifra padrão), preservando sufixo: "Sol#m" → "G#m".
+// Já em EN → retorna como está.
+export function paraNotacaoEN(tom: string): string {
+  if (!tom) return tom
+  const ptRoot = TONS_PT_DESC.find(t => tom.startsWith(t))
+  if (!ptRoot) return tom
+  return PT_TO_EN[ptRoot] + tom.slice(ptRoot.length)
+}
+
 // Transpõe um rótulo de tom por N semitons, preservando notação (PT/EN) e
 // sufixo (menor, 7, sus...). "G"→+2→"A" · "Am"→+1→"Bbm" · "Sol"→+1→"Sol#".
 // Casa a grafia (bemóis) com transporCifra p/ tom e acordes baterem.
