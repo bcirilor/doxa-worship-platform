@@ -136,3 +136,35 @@ export function transporCifra(texto: string, semitones: number): string {
     })
     .join('\n')
 }
+
+// Rótulo "Tom:" numa linha da cifra: "Tom: A", "Tom - Sol#m", "tom:D7M".
+// Grupo 1 = prefixo (rótulo+delimitador), 2 = token do tom, 3 = resto da linha.
+const TOM_LINE_RE = /^([ \t]*tom[ \t]*[:\-–][ \t]*)(\S+)([ \t]*.*)$/i
+
+// Detecta o tom declarado na linha "Tom:" da cifra e devolve o token
+// (ex.: "A", "Am7", "Sol#"), preservando a grafia. null se não houver rótulo
+// reconhecível. Usado p/ pré-preencher `musicas.tom` a partir da cifra colada.
+export function detectarTomNaCifra(texto: string): string | null {
+  if (!texto) return null
+  for (const linha of texto.split('\n')) {
+    const m = linha.match(TOM_LINE_RE)
+    if (!m) continue
+    const tom = m[2].replace(/[.,;:]+$/, '').trim()
+    if (!tom) continue
+    if (!Note.get(rootNote(tom)).empty) return tom
+  }
+  return null
+}
+
+// Transpõe SÓ a linha "Tom:" da cifra (transporCifra a ignora — não é linha de
+// acordes). Mantém rótulo, delimitador e resto da linha intactos.
+export function transporLinhaTom(texto: string, semitones: number): string {
+  if (!semitones || !texto) return texto
+  return texto
+    .split('\n')
+    .map(linha => {
+      const m = linha.match(TOM_LINE_RE)
+      return m ? m[1] + transporTom(m[2], semitones) + m[3] : linha
+    })
+    .join('\n')
+}
