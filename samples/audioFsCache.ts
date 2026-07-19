@@ -241,6 +241,9 @@ function handleWorkerMessage(e: MessageEvent): void {
 
 function initBackend(): Promise<Backend> {
   if (_backend) return _backend
+  // S1: purga IDBs legados (v1..v4) SEMPRE — antes só rodava no fallback IDB, então
+  // perfis antigos no path OPFS carregavam bloat/compaction LevelDB residual pra sempre.
+  purgeLegacyDBs()
   _backend = new Promise<Backend>((resolve) => {
     if (
       typeof window === 'undefined' || typeof Worker === 'undefined' ||
