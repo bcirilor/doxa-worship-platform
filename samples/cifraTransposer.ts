@@ -1,4 +1,4 @@
-import { Chord, Note, Interval } from 'tonal'
+import { Chord, Note } from 'tonal'
 
 export const TONS_PT = [
   'Dó', 'Dó#', 'Ré', 'Ré#', 'Mi', 'Fá', 'Fá#', 'Sol', 'Sol#', 'Lá', 'Lá#', 'Si',
@@ -23,6 +23,14 @@ function rootNote(tom: string): string {
   if (ptRoot) return PT_TO_EN[ptRoot]
   const m = tom.match(/^([A-G][#b]?)/)
   return m ? m[1] : tom
+}
+
+// Transpõe uma raiz (nota EN) por N semitons via tabela de sustenidos — grafia
+// consistente com o seletor/TomPicker em todo o app (G+1 → G#, nunca Ab).
+function transporRaizEN(raiz: string, semitones: number): string | null {
+  const chroma = Note.get(raiz).chroma
+  if (chroma == null) return null
+  return TONS_EN[(chroma + semitones) % 12]
 }
 
 export function calcularSemitoms(origem: string, destino: string): number {
@@ -59,12 +67,20 @@ export function transporTom(tom: string, semitones: number): string {
 
   const m = tom.match(/^([A-G][#b]?)(.*)$/)
   if (!m) return tom
-  const novaRaiz = Note.pitchClass(Note.transpose(m[1], Interval.fromSemitones(norm)))
+  const novaRaiz = transporRaizEN(m[1], norm)
   return novaRaiz ? novaRaiz + m[2] : tom
 }
 
 // Tokens neutros (não contam como ok nem fail) — barras, repetições, comentários inline, etc.
 const SKIP_TOKEN_RE = /^(?:[|:]+|\d+x|x\d+|\(.*\)|--+|\.\.+)$/i
+
+// Rótulo de seção seguido de acordes ("Intro:", "Solo:", "Base:") — neutro, a
+// linha continua elegível a transposição.
+const LABEL_SECAO_RE = /^(?:intro|solo|ponte|final|riff|base|passagem|interl[uú]dio|instrumental)\d*:?$/i
+
+// Palavra de prosa (4+ letras, com acentos) — se não for acorde, a linha inteira
+// é texto ("Afinação: E A D G B E", "Composição de:") e NÃO deve ser transposta.
+const PROSA_RE = /^[A-Za-zÀ-ÖØ-öø-ÿ]{4,}/
 
 // Normaliza notação não-padrão para forma reconhecida pelo tonal
 function normalizeChordToken(tok: string): string {
@@ -83,38 +99,46 @@ export function isChordLine(linha: string): boolean {
   for (const tok of tokens) {
     // Pula tokens neutros (|, x2, 2x, (dedilhado), etc.) — não pesa positivo nem negativo
     if (SKIP_TOKEN_RE.test(tok)) continue
+    if (LABEL_SECAO_RE.test(tok)) continue
+    // ":" fora de acorde = rótulo/prosa ("Afinação:", "Tom:", "2:30") — linha não é de acordes
+    if (tok.includes(':')) return false
 
-    let clean = normalizeChordToken(tok)
+    const clean = normalizeChordToken(tok)
       .replace(/\([^)]*\)/g, '')           // remove extensões entre parênteses: (11), (add9), (b5)
       .replace(/^[(|\-]+|[)|\-]+$/g, '')   // remove marcadores externos: |, -
     if (!clean) continue
     const root = clean.split('/')[0]
     // Acorde sempre começa com nota maiúscula A-G; tonal aceita minúsculas mas não é notação válida
-    if (!/^[A-G]/.test(root)) { fail++; continue }
+    if (!/^[A-G]/.test(root)) {
+      if (PROSA_RE.test(clean)) return false
+      fail++; continue
+    }
     let c = Chord.get(root)
     if (!c.tonic || c.empty) {
       // Normaliza notação com número solto: A2→Aadd2, D4→Dsus4, G6→Gadd6
       const alt = root.replace(/^([A-G][#b]?(?:m(?:aj)?|M|dim|aug|sus)?)(\d+)$/, '$1add$2')
       c = Chord.get(alt)
     }
-    c.tonic && !c.empty ? ok++ : fail++
+    if (c.tonic && !c.empty) ok++
+    else if (PROSA_RE.test(clean)) return false   // "Bbfinação", "Deus" — palavra, não acorde
+    else fail++
   }
   // Linha com 1 acorde sozinho (ex: "Bb", "Am7") é linha de acorde se zero falhas.
   // Linha com 2+ acordes: tolera 1 token estranho (ok >= fail).
   return (ok >= 1 && fail === 0) || (ok >= 2 && ok >= fail)
 }
 
-function transposeToken(token: string, itvl: string): string {
+function transposeToken(token: string, semitones: number): string {
   // Slash chord: Am/E — transpose both root and bass
   const slash = token.indexOf('/')
   if (slash > 0) {
-    return transposeToken(token.slice(0, slash), itvl) + '/' + transposeToken(token.slice(slash + 1), itvl)
+    return transposeToken(token.slice(0, slash), semitones) + '/' + transposeToken(token.slice(slash + 1), semitones)
   }
   // Normalize (7M→maj7, °→dim, etc.) for tonal lookup; preserve original suffix in output
   const chord = Chord.get(normalizeChordToken(token))
   if (!chord.tonic || chord.empty) return token
-  const newTonic = Note.pitchClass(Note.transpose(chord.tonic, itvl))
-  return newTonic + token.slice(chord.tonic.length)
+  const newTonic = transporRaizEN(chord.tonic, semitones)
+  return newTonic ? newTonic + token.slice(chord.tonic.length) : token
 }
 
 // Matches chord tokens: C, Am, F#m7, Bbsus4, G7, Dm/F, D7M/A (notação BR), etc.
@@ -122,7 +146,8 @@ const CHORD_RE = /([A-G][#b]?(?:m(?:aj)?|M|dim|aug|sus[24]?|add\d+)?(?:\d+M?)?(?
 
 export function transporCifra(texto: string, semitones: number): string {
   if (!semitones || !texto) return texto
-  const itvl = Interval.fromSemitones(((semitones % 12) + 12) % 12)
+  const norm = ((semitones % 12) + 12) % 12
+  if (norm === 0) return texto
   return texto
     .split('\n')
     .map(linha => {
@@ -131,7 +156,7 @@ export function transporCifra(texto: string, semitones: number): string {
       return linha.replace(CHORD_RE, match => {
         const root = normalizeChordToken(match.split('/')[0])
         const c = Chord.get(root)
-        return c.tonic && !c.empty ? transposeToken(match, itvl) : match
+        return c.tonic && !c.empty ? transposeToken(match, norm) : match
       })
     })
     .join('\n')
@@ -139,7 +164,9 @@ export function transporCifra(texto: string, semitones: number): string {
 
 // Rótulo "Tom:" numa linha da cifra: "Tom: A", "Tom - Sol#m", "tom:D7M".
 // Grupo 1 = prefixo (rótulo+delimitador), 2 = token do tom, 3 = resto da linha.
-const TOM_LINE_RE = /^([ \t]*tom[ \t]*[:\-–][ \t]*)(\S+)([ \t]*.*)$/i
+// `\r?` no fim: texto colado com CRLF ("Tom: G\r") tem que casar — `.` não
+// atravessa \r em JS e a linha ficava sem transpor.
+const TOM_LINE_RE = /^([ \t]*tom[ \t]*[:\-–][ \t]*)(\S+)([ \t]*.*\r?)$/i
 
 // Detecta o tom declarado na linha "Tom:" da cifra e devolve o token
 // (ex.: "A", "Am7", "Sol#"), preservando a grafia. null se não houver rótulo
