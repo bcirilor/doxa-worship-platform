@@ -24,8 +24,11 @@ which kills the tab on a phone. The document describes the fix, decoding on dema
 3 second blocks through WebCodecs in a `Worker`, with a 30ms crossfade, and the
 problems that surfaced along the way.
 
-`samples/audioFsCache.ts` is the storage side of the same engine: stems cached in
-OPFS with an IndexedDB fallback, so a rehearsal works offline.
+`samples/audioFsCache.ts` is the storage side of the same engine. The cache used to
+live in IndexedDB, and writing around 112MB per song through LevelDB froze every open
+tab. It now writes straight to OPFS through a `Worker` with a sync access handle,
+keeping IndexedDB only as the fallback for browsers below Chrome 102, Safari 16.4 and
+Firefox 111.
 
 ## Two other decisions
 
@@ -34,9 +37,10 @@ link carries an HMAC-SHA256 token over `{ member id, expiry }` with a 30 day TTL
 verified with a constant time comparison. A musician taps the link in WhatsApp and is
 confirmed, and the token cannot be forged or replayed past its expiry.
 
-**`samples/cifraTransposer.ts`.** Chord chart transposition that parses the chart
-rather than doing string replacement, so it handles slash chords, extensions and
-enharmonics without breaking the layout the musician is reading.
+**`samples/cifraTransposer.ts`.** Chord chart transposition built on `tonal`, so
+chords are parsed rather than string-replaced. It also carries both notations, the
+Latin one the Brazilian musician reads on the page (Do, Re, Mi) and the English one
+the library speaks (C, D, E), and converts between them.
 
 ## License
 
