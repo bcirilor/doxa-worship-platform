@@ -4,9 +4,10 @@ Management platform for church worship teams: scheduling, availability, song lib
 chord charts and an in-browser multitrack player. Real application, in production,
 multi-tenant.
 
-> **This repository is an excerpt.** The full application is private. What is here is
-> one architecture document and three files that carry the decisions worth reading.
-> It does not build or run on its own.
+> **This repository is an excerpt, and the samples are illustrative.** The full
+> application is private. What is here is one architecture document and three files
+> that carry the decisions worth reading, rewritten for publication rather than
+> copied from production. It does not build or run on its own.
 
 **Stack:** Next.js (App Router), React, TypeScript, Tailwind CSS, Supabase (Postgres
 with Row Level Security), Vercel.
